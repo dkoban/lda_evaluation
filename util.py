@@ -24,6 +24,7 @@ def read_crowdtangle_file(file):
                             .str.replace('\r',' ')
                             .str.replace(r"http\S+",' '))
                             #.str.decode('ascii','ignore')
+    df['Text'] = df.Text.str.replace('[^\x00-\x7F]','')
     df = df[['Facebook Id','Text']]
     return df
 

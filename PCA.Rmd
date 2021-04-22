@@ -1,0 +1,655 @@
+---
+title: PCA of Facebook and Twitter LDA Evaluation Metrics
+output:
+  html_document:
+    #code_folding: hide
+    toc: true
+    toc_float:
+      toc_collapsed: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE#,
+	#results="markup"
+)
+```
+
+<style type="text/css">
+.main-container {
+  max-width: 800px;
+  margin-left: 100px;
+  margin-right: 100px;
+}
+
+.blackbox {
+  padding: 1em;
+  background: lightgrey;
+  color: black;
+  border: 1px solid black;
+  border-radius: 5px;
+}
+</style>
+
+Topic models are easy to train, but do they generate useful topics? In this post, we discuss how to calculate several diagnostic metrics that Mallet uses to assess topic quality and conduct a principal component analysis (PCA) to determine which underlying features are most important. Since many of the evaluation metrics are highly correlated, PCA is an appropriate analytical approach. PCA is a statistical technique used to re-express highly correlated multivariate data in uncorrelated components that capture independent pieces of information represented in the larger data.
+
+To accomplish this, we use Mallet to generate fifty topics for a corpus of over 264K posts found on publicly available Facebook pages related to COVID-19 and fifty topics for a corpus of ~11 million Twitter posts related to COVID-19. We used hashtag pooling to generate topics for the Twitter corpus. We use Python to calculate diagnostic measures from Mallet topic-term frequency output files. 
+
+Based on our interpretation of the PCA results, we believe LDA topics are distinguished by two primary factors: 1) topic frequency, and 2) top-term specificity. Furthermore, on average, we found common topics with specific top terms score significantly better on coherence scores than uncommon topics with unspecific top terms. However, we also found many poor topics score relatively high on coherence scores. In other words, our results suggest topics that capture the specific, main topics of a corpus should be easier to interpret, but the interpretability of a topic doesn't imply a topic is specific or central to a corpus.
+
+## Data Standardization{.tabset .tabset-pills}
+
+First, we compare the evaluation metrics associated with each of the data sets. The density plots below show there are clear differences between the diagnostic measures for Facebook and Twitter topics. For example, Facebook has better topic coherence scores which implies the top terms of each topic co-occur more often in Facebook posts.  Likewise, Facebook topics have a larger tokens per topic count which indicates the top terms of each topic occur more frequently in the Facebook corpus.
+
+Prior to performing PCA, we must standardize the data so the metrics have a common scale.  We standardize the data so that each measure has a mean of zero and a standard deviation of 1.  The density plots below show the distributions of the standardized data.
+
+### Raw Data
+```{r, fig.align='center'}
+library(tidyverse)
+library(readr)
+library(GGally)
+library(DT)
+library(xtable)
+options(scipen=10000)
+
+# Load data
+setwd("~/Documents/lda_evaluation/")
+df1 <- read_csv("./data/crowd_tangle_lda_diagnsotics.csv") %>%
+  mutate(source = "Facebook")
+df2 <- read_csv("./data/twitter_lda_diagnostics.csv") %>%
+  mutate(source = "Twitter")
+df <- bind_rows(df1, df2)
+df <- df %>% select(-token_diff_from_mean, -rank_1_docs, -`word-length`)
+
+# DT::datatable(df, rownames = FALSE,
+#               options = list(
+#                 scrollX = TRUE,
+#                 autoWidth = TRUE,
+#                 columnDefs = list(list(className = 'dt-center', 
+#                                        targets = c(0:7, 9)),
+#                                   list(width = '350px', targets = c(8))) 
+# )) %>%
+#   DT::formatStyle(columns = colnames(.), fontSize = '10%') %>%
+#   DT::formatRound(columns = c('word-length', 'uniform_dist', 'corpus_dist',
+#                               'eff_num_words', 'exclusivity', 'coherence'), 3)
+
+plot_df <- bind_rows(df %>% select(source, value = token_count) %>% 
+                       mutate(metric = "token_count"),
+                     #df %>% select(source, value = `word-length`) %>%
+                    #   mutate(metric = "word-length"),
+                     df %>% select(source, value = uniform_dist) %>%
+                       mutate(metric = "uniform_dist"),
+                     df %>% select(source, value = corpus_dist) %>%
+                       mutate(metric = "corpus_dist"),
+                     df %>% select(source, value = eff_num_words) %>%
+                       mutate(metric = "eff_num_words"),
+                     df %>% select(source, value = exclusivity) %>%
+                       mutate(metric = "exclusivity"),
+                     df %>% select(source, value = coherence) %>%
+                       mutate(metric = "coherence"))
+ggplot(data = plot_df, 
+       mapping = aes(x = value, fill = source)) +
+  geom_density(alpha=0.4) +
+  facet_wrap(.~metric, scale = "free", ncol = 2)
+```
+
+### Standardized Data
+```{r, fig.align='center'}
+df1_norm <- df1 %>% mutate(
+  token_count = (token_count - mean(token_count))/sd(token_count),
+#  `word-length` = (`word-length` - mean(`word-length`))/sd(token_count),
+  uniform_dist = (uniform_dist - mean(uniform_dist))/sd(uniform_dist),
+  corpus_dist = (corpus_dist - mean(corpus_dist))/sd(corpus_dist),
+  eff_num_words = (eff_num_words - mean(eff_num_words))/sd(eff_num_words),
+  exclusivity = (exclusivity - mean(exclusivity))/sd(eff_num_words),
+  coherence = (coherence - mean(coherence))/sd(coherence)
+)
+
+df2_norm <- df2 %>% mutate(
+  token_count = (token_count - mean(token_count))/sd(token_count),
+#  `word-length` = (`word-length` - mean(`word-length`))/sd(token_count),
+  uniform_dist = (uniform_dist - mean(uniform_dist))/sd(uniform_dist),
+  corpus_dist = (corpus_dist - mean(corpus_dist))/sd(corpus_dist),
+  eff_num_words = (eff_num_words - mean(eff_num_words))/sd(eff_num_words),
+  exclusivity = (exclusivity - mean(exclusivity))/sd(eff_num_words),
+  coherence = (coherence - mean(coherence))/sd(coherence)
+)
+
+df_norm <- bind_rows(df1_norm, df2_norm)
+
+plot_df <- bind_rows(df_norm %>% select(source, value = token_count) %>% 
+                       mutate(metric = "token_count"),
+#                     df_norm %>% select(source, value = `word-length`) %>%
+#                       mutate(metric = "word-length"),
+                     df_norm %>% select(source, value = uniform_dist) %>%
+                       mutate(metric = "uniform_dist"),
+                     df_norm %>% select(source, value = corpus_dist) %>%
+                       mutate(metric = "corpus_dist"),
+                     df_norm %>% select(source, value = eff_num_words) %>%
+                       mutate(metric = "eff_num_words"),
+                     df_norm %>% select(source, value = exclusivity) %>%
+                       mutate(metric = "exclusivity"),
+                     df_norm %>% select(source, value = coherence) %>%
+                       mutate(metric = "coherence"))
+
+ggplot(data = plot_df, 
+       mapping = aes(x = value, fill = source)) +
+  geom_density(alpha=0.4) +
+  facet_wrap(.~metric, scale = "free", ncol = 2)
+```
+
+## Correlation Analysis
+
+Correlation analysis of the evaluation metrics shows that we are dealing with highly correlated multivariate data. There is a strong negative correlation between token count and exclusivity-in other words, exclusive topics don't occur frequently in the corpus. We also see a negative correlation between average word length and the effective number of words which implies effective terms tend to be shorter in length. Corpus entropy has a strong positive correlation with exclusivity; whereas, coherence has a strong negative correlation with corpus entropy and exclusivity.  In other words, the top terms for coherent topics tend to use words that are common to the corpus, and coherent topics tend to occur more frequently.
+
+```{r}
+original_data <- df_norm %>% select(-topic, -top_n_terms, - source, 
+                                    -token_diff_from_mean, -rank_1_docs, -`word-length`)
+corr_mat <- cor(original_data)
+upper<-corr_mat
+#upper[upper.tri(corr_mat)]<-""
+upper<-as.data.frame(upper)
+datatable(upper, 
+          options = list(
+            columnDefs = list(list(className = 'dt-center', targets = 0:6))
+            )) %>%
+  DT::formatRound(columns = c('uniform_dist', 'corpus_dist',
+                              'eff_num_words', 'exclusivity',
+                              'coherence', 'token_count'), 3) %>%
+  DT::formatStyle(columns = colnames(upper), 
+                  backgroundColor = styleInterval(c(-.4, .4, .999), 
+                                                  c('yellow',
+                                                    'white',
+                                                    'yellow',
+                                                    'white'))) 
+```
+
+## Eigen Analysis 
+
+A scree plot of the eigenvalues of the correlation matrix suggests we should retain two principal components (PCs). The general rule of thumb is to keep PCs that are "one less than the elbow" of the scree plot or PCs with an eigenvalue of 1 or greater. 
+
+<center>
+```{r}
+Eigen_Results <- eigen(corr_mat)
+eig_values <- eigen(corr_mat)$values
+eig_vectors <- eigen(corr_mat)$vectors
+Eigen_Matrix <- matrix(Eigen_Results$vectors,
+                       ncol=length(Eigen_Results$values),
+                       nrow=length(Eigen_Results$values))
+tbl <- cbind(eigen(corr_mat)$values, Eigen_Matrix) %>% 
+  as_tibble() %>%
+  rename(`Eigen Value` = V1, 
+         U1 = V2, U2 = V3, U3 = V4, U4 = V5, 
+         U5 = V6, U6 = V7)
+
+plot_df <- tibble(comp = 1:length(eig_values),
+                  values = eig_values)
+
+scree_plot <- ggplot(data = plot_df,
+                     mapping = aes(x = comp, y = values)) +
+  geom_point(color = "red3") +
+  geom_line(color = "red3") +
+  geom_hline(yintercept = 1, linetype="dashed") +
+  labs(title = "Scree Plot",
+       x = "Principal Component Number",
+       y = "Eigenvalue") + 
+  theme_minimal() +
+  scale_x_continuous(breaks = seq(0,14,by=2)) +
+  scale_y_continuous(breaks = seq(0,5,by=0.5)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.grid.minor = element_blank(),
+        panel.border = element_rect(colour = "gray", fill=NA, size=1)) 
+
+scree_plot
+```
+</center>
+
+```{r}
+tbl <- rbind(eig_values, 
+             eig_values/sum(eig_values), 
+             cumsum(eig_values/sum(eig_values))) %>%
+  cbind(c("Eigenvalue", "Proportion", "Cumulative")) %>%
+  as_tibble() %>%
+  select(x = V7,
+         U1 = V1, U2 = V2, U3 = V3) 
+  
+datatable(tbl)
+```
+
+## Loading Analysis
+
+The loading matrix below shows token count, corpus entropy, exclusivity, and coherence contribute the most to the 1st PC, which explains 44.6% of the variance based on the eigenanalysis (2.679/6 = 44.6%). Uniform entropy and the effective number of words contribute most to the 2nd PC, which explains 31.5% of the variance. Coherence contributes most to the 3rd PC, which explains 11.4% of the variance.
+
+```{r}
+original_data <- df_norm %>% select(-topic, -top_n_terms, - source, 
+                                    -token_diff_from_mean, -rank_1_docs, -`word-length`)
+Z <- as.matrix(original_data)%*%Eigen_Matrix
+reduced_data <- Z %>% as_tibble() %>%
+  select(Z1 = V1, Z2 = V2, Z3 = V3)
+
+# Loading Matrix
+Loading_Matrix<-t(eig_vectors)*sqrt(eig_values)
+Loading_Matrix<-t(Loading_Matrix)
+variable_names <- colnames(df_norm %>% dplyr::select(-topic, -top_n_terms, - source, 
+                                    -token_diff_from_mean, -rank_1_docs, -`word-length`))
+explained_var <- cbind(variable_names, Loading_Matrix^2) 
+colnames(explained_var) <- c("Variable", paste0(rep("Z",6), 1:6))
+explained_var <- explained_var %>% as_tibble()  %>% 
+  mutate(Z1 = Z1 %>% as.numeric(),
+         Z2 = Z2 %>% as.numeric(),
+         Z3 = Z3 %>% as.numeric(),
+         Z4 = Z4 %>% as.numeric(),
+         Z5 = Z5 %>% as.numeric(),
+         Z6 = Z6 %>% as.numeric(),
+         #Z7 = Z7 %>% as.numeric(),
+         total = Z1 + Z2 + Z3 + Z4 + Z5 + Z6)
+
+DT::datatable(explained_var, rownames = FALSE,
+              options = list(
+                autoWidth = TRUE,
+                columnDefs = list(list(className = 'dt-center', 
+                                       targets = 0:7)) 
+)) %>%
+  DT::formatStyle(columns = colnames(explained_var), 
+                  backgroundColor = styleInterval(c(-.4, .4, .999), 
+                                                  c('yellow',
+                                                    'white',
+                                                    'yellow',
+                                                    'white'))) %>%
+  DT::formatRound(columns = c('Z1', 'Z2', 'Z3', 'Z4', 'Z5',
+                              'Z6', 'total'), 3)
+```
+
+Based on the loading plot loading plots below, the 1st PC appears to capture topic frequency. Exclusivity and corpus entropy are positioned on the far right and imply a topic does not appear often in the corpus. Token count is positioned on the far left and implies a topic appears often in the corpus. The 2nd PC appears to capture top-term frequency. The number of effective words is positioned on the bottom and implies the top terms for individual topics are top terms in many topics. Uniform entropy is located at the top and indicates a topic distribution (as well as the top terms of that distribution) does not add much information when compared to using a uniform distribution.
+
+```{r, fig.width=4.5, fig.height=4.5, fig.align='center'}
+plot_df <- cbind(variable_names, Loading_Matrix[,1:2]) 
+colnames(plot_df) <- c("Description", "Z1", "Z2")
+
+### Flip the sign of the PCs
+plot_df <- plot_df %>% as_tibble() %>%
+  mutate(Z1 = Z1 %>% as.numeric(),
+         Z2 = Z2 %>% as.numeric())
+plot_df$Z1 <- -plot_df$Z1
+
+p <- ggplot(data = plot_df,
+            mapping = aes(x = Z1, y = Z2, label = Description)) +
+  geom_point() +
+  geom_text(aes(label=Description),nudge_x=0.027, nudge_y=.07,
+            size = 2.4) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) + 
+  scale_x_continuous(breaks = seq(-1, 1, by = 0.2), 
+                     limits = c(-1, 1)) +
+  scale_y_continuous(breaks = seq(-1, 1, by = 0.2),
+                     limits = c(-1, 1))  +
+  labs(#title = "Loading Plot",
+       x = "1st Principal Component \n Topic Frequency",
+       y = "2nd Principal Component \n Top-Term Specificity") + 
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.grid.minor = element_blank(),
+        panel.border = element_rect(colour = "gray", fill=NA, size=1)) 
+
+for (i in 1:nrow(plot_df)){
+p <- p + geom_segment(x = 0, y = 0, xend=plot_df$Z1[i], yend=plot_df$Z2[i],
+                      linetype="dashed", color = "red3", size = 0.25) }
+
+p
+```
+
+## Score Plots{.tabset .tabset-pills}
+
+We examine score plots of the PC values associated with each topic to validate our interpretation of the PCs. The interactive plots below facilitate doing a more subjective evaluation of specificity and allow us to apply human intuition about which topics would likely be more prevalent in the corpora.
+
+Sizing the score plot by token count supports our interpretation that the 1st PC captures topic frequency. Likewise, sizing the points by the effective number of words supports our interpretation that the 2nd PC captures top-term specificity.
+
+The score plot with points sized by coherence scores is less clear. It looks like the more coherent topics (i.e., the points with a smaller diameter) are concentrated more heavily in the top right quadrant and the less coherent scores are concentrated in the bottom left. However, there are many relatively small-sized points scattered throughout all four quadrants. Given that coherence scores are based on top terms co-occuring in documents, the pattern that emerges in the score plot makes more sense.
+
+<center>
+```{r, include=FALSE}
+library(plotly)
+tool_tip <- c()
+for (i in 1:100){
+  split_terms <- df$top_n_terms[i] %>% str_split(",") %>% unlist()
+  joined_terms <- paste0("<br>",
+                         paste0(split_terms[1:4], collapse = ","), 
+                         "<br>",
+                         paste0(split_terms[5:7], collapse = ","),
+                         "<br>",
+                         paste0(split_terms[8:10], collapse = ","))
+  tool_tip[i] <- joined_terms 
+}
+plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
+                                   terms = tool_tip) 
+
+plot_df$color <- "red"
+plot_df$color[51:100] <- "blue"
+#plot_df$size <- 10*df$token_count/max(df$token_count)
+plot_df$size <- 2*(df_norm$coherence - min(df_norm$coherence) + 0.25)
+
+
+plot_ly(plot_df, 
+        x = ~Z1, 
+        y = ~Z2, 
+        z = ~Z3,
+        text = ~terms, 
+        hovertemplate='<b>%{text}</b><extra></extra>',
+        marker=list(size=~size, color = ~color),
+        width=1000, height=1000) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'PC1 - Topic Frequency',  zerolinewidth = 1),
+                     yaxis = list(title = 'PC2 - Top Term Specificity',  zerolinewidth = 1),
+                     zaxis = list(title = 'PC3 - Avg Word Length',  zerolinewidth = 1)))
+
+
+```
+
+```{r, include=FALSE}
+library(ggplot2)
+library(ggExtra)
+library(gridExtra)
+
+plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
+                                   terms = tool_tip) 
+plot_df$Z1 <- -plot_df$Z1
+
+plot_df$size <- c(df1$coherence / min(df1$coherence),
+                  df2$coherence / min(df2$coherence))
+
+plot_df$color <- "red" 
+plot_df$color[51:100] <- "blue" 
+
+# classic plot :
+p1 <- ggplot(plot_df[1:50,], aes(x=Z1, y=Z2, color = "red", size=size, alpha = 0.5, label=topic)) +
+      geom_point() +
+      theme(legend.position="none") +
+  labs(title = "Facebook",
+       x = "1st PC \n Topic Frequency",
+       y = "2nd PC \n Top-Term Specificity") +
+  scale_x_continuous(breaks=seq(-4, 5, 1)) +
+  scale_y_continuous(breaks=seq(-4, 3, 1)) +
+  scale_color_manual(values = c("red"))
+
+ 
+# with marginal histogram
+p1 <- ggMarginal(p1, type="histogram")
+#ggplotly(p)
+
+p2 <- ggplot(plot_df[51:100,], aes(x=Z1, y=Z2, color = "blue", size=size, alpha = 0.5, label=topic)) +
+      geom_point() +
+      theme(legend.position="none") +
+  labs(title = "Twitter",
+       x = "1st PC \n Topic Frequency",
+       y = "2nd PC \n Top-Term Specificity") +
+  scale_x_continuous(breaks=seq(-4, 5, 1)) +
+  scale_y_continuous(breaks=seq(-4, 3, 1)) +
+  scale_color_manual(values = c("blue"))
+
+ 
+# with marginal histogram
+p2 <- ggMarginal(p2, type="histogram")
+#ggplotly(p)
+
+grid.arrange(p1, p2, ncol=2)
+```
+
+</center>
+
+### Token Count
+
+```{r, fig.align='center'}
+plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
+                                   terms = tool_tip) 
+plot_df$Z1 <- -plot_df$Z1
+
+plot_df$size <- c(df1$token_count / max(df1$token_count),
+                  df2$token_count / max(df2$token_count))
+
+xlab <-  paste0('<span style="font-size:70%">Uncommon</span>',
+                '               ', 
+                'PC1 - Topic Frequency',
+                '               ', 
+                '<span style="font-size:70%">Common</span>')
+
+ylab <-  paste0('<span style="font-size:70%">Unspecific</span>',
+                '           ', 
+                'PC2 - Top-Term Specificity',
+                '           ', 
+                '<span style="font-size:70%">Specific</span>')
+
+plot_df$color <- "Facebook"
+plot_df$color[51:100] <- "Twitter"
+plot_ly(plot_df, 
+        x = ~Z1, 
+        y = ~Z2, 
+        color = ~color,
+        colors = c("red", "blue"),
+        text = ~terms, 
+        hovertemplate='<b>%{text}</b><extra></extra>',
+        marker=list(size=~10*size),
+        width=700, height=500) %>%
+  add_markers() %>%
+  layout(title = "Points Sized by Token Count",
+         xaxis = list(title = xlab),
+         yaxis = list(title = ylab))
+```
+
+### Exclusivity 
+
+```{r, fig.align='center'}
+plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
+                                   terms = tool_tip) 
+plot_df$Z1 <- -plot_df$Z1
+
+plot_df$size <- c(df1$exclusivity / max(df1$exclusivity),
+                  df2$exclusivity / max(df2$exclusivity))
+
+plot_df$color <- "Facebook"
+plot_df$color[51:100] <- "Twitter"
+plot_ly(plot_df, 
+        x = ~Z1, 
+        y = ~Z2, 
+        color = ~color,
+        colors = c("red", "blue"),
+        text = ~terms, 
+        hovertemplate='<b>%{text}</b><extra></extra>',
+        marker=list(size=~10*size),
+        width=700, height=500) %>%
+  add_markers() %>%
+  layout(title = "<b>Points Sized by Exclusivity</b>",
+         xaxis = list(title = xlab),
+         yaxis = list(title = ylab))
+```
+
+### Effective # of Words 
+
+```{r, fig.align='center'}
+plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
+                                   terms = tool_tip) 
+plot_df$Z1 <- -plot_df$Z1
+
+plot_df$size <- c(df1$eff_num_words / max(df1$eff_num_words),
+                  df2$eff_num_words / max(df2$eff_num_words))
+
+plot_df$color <- "Facebook"
+plot_df$color[51:100] <- "Twitter"
+plot_ly(plot_df, 
+        x = ~Z1, 
+        y = ~Z2, 
+        color = ~color,
+        colors = c("red", "blue"),
+        text = ~terms, 
+        hovertemplate='<b>%{text}</b><extra></extra>',
+        marker=list(size=~10*size),
+        width=700, height=500) %>%
+  add_markers() %>%
+  layout(title = "Points Sized by Effective Number of Words",
+         xaxis = list(title = xlab),
+         yaxis = list(title = ylab))
+```
+
+### Uniform Entropy
+
+```{r}
+plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
+                                   terms = tool_tip) 
+plot_df$Z1 <- -plot_df$Z1
+
+plot_df$size <- c(df1_norm$uniform_dist - min(df1_norm$uniform_dist),
+                  df2_norm$uniform_dist - min(df2_norm$uniform_dist))
+
+plot_df$color <- "Facebook"
+plot_df$color[51:100] <- "Twitter"
+plot_ly(plot_df, 
+        x = ~Z1, 
+        y = ~Z2, 
+        color = ~color,
+        colors = c("red", "blue"),
+        text = ~terms, 
+        hovertemplate='<b>%{text}</b><extra></extra>',
+        marker=list(size=~2*size),
+        width=700, height=500) %>%
+  add_markers() %>%
+  layout(title = "Points Sized by Uniform Entropy",
+         xaxis = list(title = xlab),
+         yaxis = list(title = ylab))
+```
+
+### Corpus Entropy
+
+```{r}
+plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
+                                   terms = tool_tip) 
+plot_df$Z1 <- -plot_df$Z1
+
+plot_df$size <- c(df1_norm$corpus_dist - min(df1_norm$corpus_dist),
+                  df2_norm$corpus_dist - min(df2_norm$corpus_dist))
+
+plot_df$color <- "Facebook"
+plot_df$color[51:100] <- "Twitter"
+plot_ly(plot_df, 
+        x = ~Z1, 
+        y = ~Z2, 
+        color = ~color,
+        colors = c("red", "blue"),
+        text = ~terms, 
+        hovertemplate='<b>%{text}</b><extra></extra>',
+        marker=list(size=~2*size),
+        width=700, height=500) %>%
+  add_markers() %>%
+  layout(title = "Points Sized by Corpus Entropy",
+         xaxis = list(title = xlab),
+         yaxis = list(title = ylab))
+```
+
+### Coherence
+
+```{r}
+plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
+                                   terms = tool_tip) 
+plot_df$Z1 <- -plot_df$Z1
+
+# plot_df$size <- c(df1_norm$coherence - min(df1_norm$coherence) + 0.1,
+#                   df2_norm$coherence - min(df2_norm$coherence) + 0.1)
+
+plot_df$size <- c(df1$coherence / min(df1$coherence),
+                  df2$coherence / min(df2$coherence))
+
+plot_df$color <- "Facebook"
+plot_df$color[51:100] <- "Twitter"
+plot_ly(plot_df, 
+        x = ~Z1, 
+        y = ~Z2, 
+        color = ~color,
+        colors = c("red", "blue"),
+        text = ~terms, 
+        hovertemplate='<b>%{text}</b><extra></extra>',
+        marker=list(size=~10*size),
+        width=700, height=500) %>%
+  add_markers() %>%
+  layout(title = "Points Sized by Coherence",
+         xaxis = list(title = xlab),
+         yaxis = list(title = ylab))
+```
+
+##_
+
+For example, the Twitter topic in the top left includes the following top terms: economy, people, urge, coronavirus, million, debt, package, needed, student, and stimulate. This topic is very coherent - terms like "stimulate" and "economy" or "student" and "debt" are common word pairings. Hence, it's very plausible that posts about economic stimulus related to student debt could generate this topic. Likewise, it's reasonable to think this topic would be relatively less central to a COVID-19 discussion focused on health risks, disease prevention, and government restrictions.
+In contrast, the Facebook topic in the bottom right includes the following top terms: people, government, crisis, world, pandemic, time, coronavirus, political, country, and public. This topic is not very specific, but the top terms seem like words that would co-occur frequently. This topic also seems like it would be central to the COVID-19 discussion.
+
+## Box Plots by Quadrant
+
+Plotting the normalized coherence scores by each quadrant of the score plot allows us to see that the coherence scores are significantly better for common topics with specific top terms. However, uncommon topics with unspecific terms have a large overlap with common topics with specific terms in the Twitter topics. Stated simply, coherence looks like a good measure most of the time, but not always.
+
+```{r, fig.width=6, fig.align='center'}
+bottom_left_twitter <- plot_df$size[plot_df$Z1 <=0 & plot_df$Z2<=0 & plot_df$color == "Twitter"]
+bottom_right_twitter <- plot_df$size[plot_df$Z1 >=0 & plot_df$Z2<=0 & plot_df$color == "Twitter"]
+top_left_twitter <- plot_df$size[plot_df$Z1 <=0 & plot_df$Z2>=0 & plot_df$color == "Twitter"]
+top_right_twitter <- plot_df$size[plot_df$Z1 >=0 & plot_df$Z2>=0 & plot_df$color == "Twitter"]
+
+bottom_left_fb <- plot_df$size[plot_df$Z1 <=0 & plot_df$Z2<=0 & plot_df$color == "Facebook"]
+bottom_right_fb <- plot_df$size[plot_df$Z1 >=0 & plot_df$Z2<=0 & plot_df$color == "Facebook"]
+top_left_fb <- plot_df$size[plot_df$Z1 <=0 & plot_df$Z2>=0 & plot_df$color == "Facebook"]
+top_right_fb <- plot_df$size[plot_df$Z1 >=0 & plot_df$Z2>=0 & plot_df$color == "Facebook"]
+
+box_plot_data <- bind_rows(tibble(Quadrant = "uncommon_unspecific", 
+                                  `Normalized Coherence Values` = bottom_left_twitter,
+                                  source = "Twitter"),
+                           tibble(Quadrant = "common_unspecific", 
+                                  `Normalized Coherence Values` = bottom_right_twitter,
+                                  source = "Twitter"),
+                           tibble(Quadrant = "uncommon_specific", 
+                                  `Normalized Coherence Values` = top_left_twitter,
+                                  source = "Twitter"),
+                           tibble(Quadrant = "common_specific", 
+                                  `Normalized Coherence Values` = top_right_twitter,
+                                  source = "Twitter"),
+                           tibble(Quadrant = "uncommon_unspecific", 
+                                  `Normalized Coherence Values` = bottom_left_fb,
+                                  source = "Facebook"),
+                           tibble(Quadrant = "common_unspecific", 
+                                  `Normalized Coherence Values` = bottom_right_fb,
+                                  source = "Facebook"),
+                           tibble(Quadrant = "uncommon_specific", 
+                                  `Normalized Coherence Values` = top_left_fb,
+                                  source = "Facebook"),
+                           tibble(Quadrant = "common_specific", 
+                                  `Normalized Coherence Values` = top_right_fb,
+                                  source = "Facebook"))
+ggplot(data = box_plot_data, 
+       mapping = aes(x = `Normalized Coherence Values`, y = Quadrant, fill = Quadrant)) +
+  geom_boxplot() +
+  theme(legend.position = "bottom") +
+  labs(y = " ") + 
+  guides(fill = FALSE) +
+  coord_flip() +
+  facet_wrap(~source, ncol=2) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+
+```{r, include=FALSE}
+plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
+                                   terms = tool_tip) 
+plot_df$Z1 <- -plot_df$Z1
+
+plot_df$size <- c(df1$coherence / min(df1$coherence),
+                  df2$coherence / min(df2$coherence))
+
+ggplot(data = plot_df,
+       mapping = aes(x = Z2,
+                     y = size)) + 
+  geom_point()
+```
+
+## Conclusion
+
+So, what is the best metric to evaluate topic quality? It depends.
+
+If the goal is to find topics that are most representative of a corpus of documents, we believe the combination of high token count and high uniform entropy will identify relatively coherent topics. Moreover, we don't think using coherence alone is prudent. Coherence doesn't imply a topic is central to a discussion, and it doesn't imply a topic has a specific focus.
+
+In contrast, if the goal is to quickly surface unique insights that may not be readily apparent, even after reading many documents, then low token count and high uniform entropy may be better suited. The downside is that these topics may require more contextual cues and effort to understand how the top terms are related.

@@ -287,7 +287,7 @@ DT::datatable(explained_var, rownames = FALSE,
                               'Z6', 'total'), 3)
 ```
 
-Based on the loading plot below, the 1st PC appears to capture term frequency. Token count is positioned on the far left and implies a topic's terms appears often in the corpus. The 2nd PC appears to capture term specificity. Uniform entropy is located at the top and implies a the topic word distributions capture more information than a uniform distribution.  
+Based on the loading plot below, the 1st PC appears to capture term frequency. Token count is positioned on the far right and implies a topic's terms appears often in the corpus. The 2nd PC appears to capture term specificity. Uniform distance is located at the top and implies a the topic word distributions capture more information than a uniform distribution.  
 
 ```{r, fig.width=4.5, fig.height=4.5, fig.align='center'}
 plot_df <- cbind(variable_names, Loading_Matrix[,1:2]) 

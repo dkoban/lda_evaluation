@@ -35,11 +35,24 @@ knitr::opts_chunk$set(
 }
 </style>
 
-Topic models are easy to train, but do they generate useful topics? In this post, we discuss how to calculate several diagnostic metrics that Mallet uses to assess topic quality and conduct a principal component analysis (PCA) to determine which underlying features are most important. Since many of the evaluation metrics are highly correlated, PCA is an appropriate analytical approach. PCA is a statistical technique used to re-express highly correlated multivariate data in uncorrelated components that capture independent pieces of information represented in the larger data.
+Topic models are easy to train, but do they generate useful topics? In this post, we discuss several diagnostic metrics that Mallet uses to assess topic quality and conduct a principal component analysis (PCA) to determine which underlying features are most important. Since many of the evaluation metrics are highly correlated, PCA is an appropriate analytical approach. PCA is a statistical technique used to re-express highly correlated multivariate data in uncorrelated components that capture independent pieces of information represented in the larger data.
 
 To accomplish this, we use Mallet to generate fifty topics for a corpus of over 264K posts found on publicly available Facebook pages related to COVID-19 and fifty topics for a corpus of ~11 million Twitter posts related to COVID-19. We used hashtag pooling to generate topics for the Twitter corpus. We use Python to calculate diagnostic measures from Mallet topic-term frequency output files. 
 
-Based on our interpretation of the PCA results, we believe LDA topics are distinguished by two primary factors: 1) topic frequency, and 2) top-term specificity. Furthermore, on average, we found common topics with specific top terms score significantly better on coherence scores than uncommon topics with unspecific top terms. However, we also found many poor topics score relatively high on coherence scores. In other words, our results suggest topics that capture the specific, main topics of a corpus should be easier to interpret, but the interpretability of a topic doesn't imply a topic is specific or central to a corpus.
+Based on our interpretation of the PCA results, we believe LDA topics are distinguished by two primary factors: 1) term frequency, and 2) term specificity. Furthermore, on average, we found topics with common, specific terms score significantly better on coherence scores than topics with uncommon, unspecfic terms. However, we also found several cases of poor topics that scored relatively high on coherence scores. In other words, our results suggest topics that use the common, specific terms should be easier to interpret, but interpretability doesn't imply a topic is comprised of terms that are specific or central to a corpus.
+
+## Evaluation Metrics
+
+The table below provides a description of the metrics used in this analysis.
+
+ Metric | Description 
+ ---- | --------- 
+1. Token Count <br> (Frequency) | Measures the number of words assigned to each topic.  A high token count indicates a topic appears frequently in the corpus. Topics with high token counts may be too general.  Topics with low token counts may be unreliable due to inability to derive effective word distributions.
+2. Uniform Distance <br> (Specificity)| Measures the distance from a topic's distribution over words to a uniform distribution. This distance is often interpreted as the amount of information lost when a uniform distribution is used instead of the topic distribution.  Larger values indicate more specificity. 
+3. Corpus Distance <br> (Distinctness) | Measures the distance from a topic's distribution over words to the overall distribution of words in the corpus. Smaller values indicate a topic is distinct.  Larger values indicate a topic is similar to the corpus. 
+4. Effective Number of Words <br> (Specificity) | Measures the extent to which the top words of a topic appear as top words in other topics. For each word in a topic, we calculate the inverse of the squared probability of the word in the topic and then sum the values. Larger values indicate more specificity.
+5. Exclusivity <br> (Frequency)| Measures the extent to which the top words of a topic appear as top words in other topics.  We calculate exclusivity as the average, over each top word, of the probability of that word in the topic divided by the sum of the probabilities of that word in all topics. Smaller values indicate more general topics.
+6. Coherence <br> (Interpretability) | Measures whether the words in a topic tend to co-occur. Large negative values indicate a topic's top-n terms do not co-occur often.  Values close to zero indicate that words co-occur often.
 
 ## Data Standardization{.tabset .tabset-pills}
 
@@ -142,13 +155,23 @@ ggplot(data = plot_df,
   facet_wrap(.~metric, scale = "free", ncol = 2)
 ```
 
-## Correlation Analysis
+## Correlation Analysis{.tabset .tabset-pills}
 
-Correlation analysis of the evaluation metrics shows that we are dealing with highly correlated multivariate data. There is a strong negative correlation between token count and exclusivity-in other words, exclusive topics don't occur frequently in the corpus. We also see a negative correlation between average word length and the effective number of words which implies effective terms tend to be shorter in length. Corpus entropy has a strong positive correlation with exclusivity; whereas, coherence has a strong negative correlation with corpus entropy and exclusivity.  In other words, the top terms for coherent topics tend to use words that are common to the corpus, and coherent topics tend to occur more frequently.
+Correlation analysis of the evaluation metrics shows that we are dealing with highly correlated multivariate data (e.g., token count has a strong negative (-0.776) correlation with corpus distance). We find a positive correlation (0.427) between coherence and token count, which suggests interpretable topics tend to use more common terms. Likewise, we find a positive correlation (0.361) between coherence and uniform distance, which suggest interpretable topics tend to use more specific terms.
 
+### Pairwise Plots
 ```{r}
 original_data <- df_norm %>% select(-topic, -top_n_terms, - source, 
                                     -token_diff_from_mean, -rank_1_docs, -`word-length`)
+
+ggpairs(original_data,
+        #upper = list(continuous = wrap("density", alpha = 0.5), combo = "box"),
+        lower = list(continuous = wrap("points", alpha = 0.3,    size=0.3), 
+        combo = wrap("dot", alpha = 0.5,            size=0.4) ))
+```
+
+### Correlation Matrix
+```{r}
 corr_mat <- cor(original_data)
 upper<-corr_mat
 #upper[upper.tri(corr_mat)]<-""
@@ -161,7 +184,7 @@ datatable(upper,
                               'eff_num_words', 'exclusivity',
                               'coherence', 'token_count'), 3) %>%
   DT::formatStyle(columns = colnames(upper), 
-                  backgroundColor = styleInterval(c(-.4, .4, .999), 
+                  backgroundColor = styleInterval(c(-.2, .2, .999), 
                                                   c('yellow',
                                                     'white',
                                                     'yellow',
@@ -222,7 +245,7 @@ datatable(tbl)
 
 ## Loading Analysis
 
-The loading matrix below shows token count, corpus entropy, exclusivity, and coherence contribute the most to the 1st PC, which explains 44.6% of the variance based on the eigenanalysis (2.679/6 = 44.6%). Uniform entropy and the effective number of words contribute most to the 2nd PC, which explains 31.5% of the variance. Coherence contributes most to the 3rd PC, which explains 11.4% of the variance.
+The loading matrix below shows token count, corpus distance, and exclusivity are weighted heavily in the 1st PC, which explains 44.6% of the variance based on the eigenanalysis (2.679/6 = 44.6%). Uniform distance and the effective number of words are weighted heavily in the 2nd PC, which explains 31.5% of the variance. Coherence contributes most to the 3rd PC, which explains 11.4% of the variance.
 
 ```{r}
 original_data <- df_norm %>% select(-topic, -top_n_terms, - source, 
@@ -264,7 +287,7 @@ DT::datatable(explained_var, rownames = FALSE,
                               'Z6', 'total'), 3)
 ```
 
-Based on the loading plot loading plots below, the 1st PC appears to capture topic frequency. Exclusivity and corpus entropy are positioned on the far right and imply a topic does not appear often in the corpus. Token count is positioned on the far left and implies a topic appears often in the corpus. The 2nd PC appears to capture top-term frequency. The number of effective words is positioned on the bottom and implies the top terms for individual topics are top terms in many topics. Uniform entropy is located at the top and indicates a topic distribution (as well as the top terms of that distribution) does not add much information when compared to using a uniform distribution.
+Based on the loading plot below, the 1st PC appears to capture term frequency. Token count is positioned on the far left and implies a topic's terms appears often in the corpus. The 2nd PC appears to capture term specificity. Uniform entropy is located at the top and implies a the topic word distributions capture more information than a uniform distribution.  
 
 ```{r, fig.width=4.5, fig.height=4.5, fig.align='center'}
 plot_df <- cbind(variable_names, Loading_Matrix[,1:2]) 
@@ -288,8 +311,8 @@ p <- ggplot(data = plot_df,
   scale_y_continuous(breaks = seq(-1, 1, by = 0.2),
                      limits = c(-1, 1))  +
   labs(#title = "Loading Plot",
-       x = "1st Principal Component \n Topic Frequency",
-       y = "2nd Principal Component \n Top-Term Specificity") + 
+       x = "1st Principal Component \n Term Frequency",
+       y = "2nd Principal Component \n Term Specificity") + 
   theme_minimal() +
   theme(plot.title = element_text(hjust = 0.5),
         panel.grid.minor = element_blank(),
@@ -304,11 +327,13 @@ p
 
 ## Score Plots{.tabset .tabset-pills}
 
-We examine score plots of the PC values associated with each topic to validate our interpretation of the PCs. The interactive plots below facilitate doing a more subjective evaluation of specificity and allow us to apply human intuition about which topics would likely be more prevalent in the corpora.
-
-Sizing the score plot by token count supports our interpretation that the 1st PC captures topic frequency. Likewise, sizing the points by the effective number of words supports our interpretation that the 2nd PC captures top-term specificity.
+Examining score plots of the PC values associated with each topic is helpful to validate our interpretation of the PCs. The interactive plots below facilitate conducting a more subjective evaluation of the data. Sizing the score plot by token count supports our interpretation that the 1st PC captures term frequency. Likewise, sizing the points by the effective number of words supports our interpretation that the 2nd PC captures term specificity.
 
 The score plot with points sized by coherence scores is less clear. It looks like the more coherent topics (i.e., the points with a smaller diameter) are concentrated more heavily in the top right quadrant and the less coherent scores are concentrated in the bottom left. However, there are many relatively small-sized points scattered throughout all four quadrants. Given that coherence scores are based on top terms co-occuring in documents, the pattern that emerges in the score plot makes more sense.
+
+For example, the Twitter topic in the top left includes the following top terms: economy, people, urge, coronavirus, million, debt, package, needed, student, and stimulate. This topic is very coherent. Phrases like "stimulate economy" or "student debt" are common word pairings. Hence, it's very plausible that posts about economic stimulus related to student debt could have generated this topic. Likewise, it's reasonable to think this topic would be relatively less central to a COVID-19 discussion focused on health risks, disease prevention, and government restrictions.
+
+In contrast, the Facebook topic in the bottom right includes the following top terms: people, government, crisis, world, pandemic, time, coronavirus, political, country, and public. This topic is not very specific, but the top terms seem like words that would co-occur frequently. This topic also seems like it would be central to the COVID-19 discussion.
 
 <center>
 ```{r, include=FALSE}
@@ -342,8 +367,8 @@ plot_ly(plot_df,
         marker=list(size=~size, color = ~color),
         width=1000, height=1000) %>%
   add_markers() %>%
-  layout(scene = list(xaxis = list(title = 'PC1 - Topic Frequency',  zerolinewidth = 1),
-                     yaxis = list(title = 'PC2 - Top Term Specificity',  zerolinewidth = 1),
+  layout(scene = list(xaxis = list(title = 'PC1 - Term Frequency',  zerolinewidth = 1),
+                     yaxis = list(title = 'PC2 - Term Specificity',  zerolinewidth = 1),
                      zaxis = list(title = 'PC3 - Avg Word Length',  zerolinewidth = 1)))
 
 
@@ -369,8 +394,8 @@ p1 <- ggplot(plot_df[1:50,], aes(x=Z1, y=Z2, color = "red", size=size, alpha = 0
       geom_point() +
       theme(legend.position="none") +
   labs(title = "Facebook",
-       x = "1st PC \n Topic Frequency",
-       y = "2nd PC \n Top-Term Specificity") +
+       x = "1st PC \n Term Frequency",
+       y = "2nd PC \n Term Specificity") +
   scale_x_continuous(breaks=seq(-4, 5, 1)) +
   scale_y_continuous(breaks=seq(-4, 3, 1)) +
   scale_color_manual(values = c("red"))
@@ -384,8 +409,8 @@ p2 <- ggplot(plot_df[51:100,], aes(x=Z1, y=Z2, color = "blue", size=size, alpha 
       geom_point() +
       theme(legend.position="none") +
   labs(title = "Twitter",
-       x = "1st PC \n Topic Frequency",
-       y = "2nd PC \n Top-Term Specificity") +
+       x = "1st PC \n Term Frequency",
+       y = "2nd PC \n Term Specificity") +
   scale_x_continuous(breaks=seq(-4, 5, 1)) +
   scale_y_continuous(breaks=seq(-4, 3, 1)) +
   scale_color_manual(values = c("blue"))
@@ -412,13 +437,13 @@ plot_df$size <- c(df1$token_count / max(df1$token_count),
 
 xlab <-  paste0('<span style="font-size:70%">Uncommon</span>',
                 '               ', 
-                'PC1 - Topic Frequency',
+                'PC1 - Term Frequency',
                 '               ', 
                 '<span style="font-size:70%">Common</span>')
 
 ylab <-  paste0('<span style="font-size:70%">Unspecific</span>',
                 '           ', 
-                'PC2 - Top-Term Specificity',
+                'PC2 - Term Specificity',
                 '           ', 
                 '<span style="font-size:70%">Specific</span>')
 
@@ -493,7 +518,7 @@ plot_ly(plot_df,
          yaxis = list(title = ylab))
 ```
 
-### Uniform Entropy
+### Uniform Dist
 
 ```{r}
 plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
@@ -520,7 +545,7 @@ plot_ly(plot_df,
          yaxis = list(title = ylab))
 ```
 
-### Corpus Entropy
+### Corpus Dist
 
 ```{r}
 plot_df <- reduced_data %>% mutate(topic = df_norm$topic,
@@ -577,14 +602,9 @@ plot_ly(plot_df,
          yaxis = list(title = ylab))
 ```
 
-##_
-
-For example, the Twitter topic in the top left includes the following top terms: economy, people, urge, coronavirus, million, debt, package, needed, student, and stimulate. This topic is very coherent - terms like "stimulate" and "economy" or "student" and "debt" are common word pairings. Hence, it's very plausible that posts about economic stimulus related to student debt could generate this topic. Likewise, it's reasonable to think this topic would be relatively less central to a COVID-19 discussion focused on health risks, disease prevention, and government restrictions.
-In contrast, the Facebook topic in the bottom right includes the following top terms: people, government, crisis, world, pandemic, time, coronavirus, political, country, and public. This topic is not very specific, but the top terms seem like words that would co-occur frequently. This topic also seems like it would be central to the COVID-19 discussion.
-
 ## Box Plots by Quadrant
 
-Plotting the normalized coherence scores by each quadrant of the score plot allows us to see that the coherence scores are significantly better for common topics with specific top terms. However, uncommon topics with unspecific terms have a large overlap with common topics with specific terms in the Twitter topics. Stated simply, coherence looks like a good measure most of the time, but not always.
+Plotting the normalized coherence scores by each quadrant of the score plot allows us to see that the coherence scores are significantly better for topics that use common, specific terms. However, there is a also large overlap between Twitter topics that use uncommon, unspecific terms and Twitter topics that use common, specific terms. Stated simply, coherence looks like a good measure of topic quality most of the time, but not always.
 
 ```{r, fig.width=6, fig.align='center'}
 bottom_left_twitter <- plot_df$size[plot_df$Z1 <=0 & plot_df$Z2<=0 & plot_df$color == "Twitter"]
@@ -650,6 +670,6 @@ ggplot(data = plot_df,
 
 So, what is the best metric to evaluate topic quality? It depends.
 
-If the goal is to find topics that are most representative of a corpus of documents, we believe the combination of high token count and high uniform entropy will identify relatively coherent topics. Moreover, we don't think using coherence alone is prudent. Coherence doesn't imply a topic is central to a discussion, and it doesn't imply a topic has a specific focus.
+If the goal is to find topics that are most representative of a corpus of documents, we believe the combination of high token count and high uniform distance will identify relatively coherent topics. More importantly, we don't think using coherence alone is prudent. Coherence doesn't imply a topic is central to a discussion, and it doesn't imply a topic has a specific focus.
 
-In contrast, if the goal is to quickly surface unique insights that may not be readily apparent, even after reading many documents, then low token count and high uniform entropy may be better suited. The downside is that these topics may require more contextual cues and effort to understand how the top terms are related.
+In contrast, if the goal is to quickly surface unique insights that may not be readily apparent, even after reading many documents, then low token count and high uniform distance may be better suited. The downside is that these topics may require more contextual cues and effort to understand how the top terms are related.
